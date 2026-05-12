@@ -13,10 +13,11 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from deepresearch_agent.agents import JudgeAgent, PlannerAgent, ResearcherAgent, WriterAgent
+from deepresearch_agent.agents.writer import select_top_evidences_per_task
 from deepresearch_agent.engine import DAGTaskScheduler, TaskDAG
 from deepresearch_agent.llm import create_llm
 from deepresearch_agent.memory import MemoryStore
-from deepresearch_agent.report import format_report_with_score
+from deepresearch_agent.report import ensure_report_completeness, format_report_with_score
 from deepresearch_agent.schemas import ResearchReport, SchedulerConfig, TaskNode, TaskState
 
 
@@ -43,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     thinking_group.add_argument("--disable-thinking", dest="enable_thinking", action="store_false")
     parser.add_argument("--mode", default="dag", choices=["linear", "dag"], help="Research execution mode.")
     parser.add_argument("--max-concurrency", type=int, default=3, help="Maximum concurrent DAG research tasks.")
-    parser.add_argument("--global-timeout-seconds", type=int, default=120, help="Global timeout for DAG mode.")
+    parser.add_argument("--global-timeout-seconds", type=int, default=None, help="Global timeout for DAG mode.")
+    parser.add_argument("--writer-top-k-per-task", type=int, default=2, help="Evidence items per task used by WriterAgent.")
     parser.add_argument("--enable-replan", dest="enable_replan", action="store_true", default=True)
     parser.add_argument("--disable-replan", dest="enable_replan", action="store_false")
     parser.add_argument(
@@ -62,7 +64,7 @@ async def run_demo(
     output_dir: Path,
     mode: str = "dag",
     max_concurrency: int = 3,
-    global_timeout_seconds: int = 120,
+    global_timeout_seconds: int | None = None,
     enable_replan: bool = True,
     failure_scenario: str = "none",
     api_base: str | None = None,
@@ -72,6 +74,7 @@ async def run_demo(
     max_tokens: int = 4096,
     request_timeout: int = 180,
     enable_thinking: bool | None = None,
+    writer_top_k_per_task: int = 2,
 ) -> dict[str, Any]:
     llm = create_llm(
         backend,
@@ -90,6 +93,11 @@ async def run_demo(
     judge = JudgeAgent(llm)
 
     execution_steps: list[dict[str, Any]] = []
+    effective_global_timeout_seconds = (
+        global_timeout_seconds
+        if global_timeout_seconds is not None
+        else (300 if backend != "mock" else 120)
+    )
 
     subtasks = await planner.plan(question)
     execution_steps.append({"step": "plan", "state": "SUCCEEDED", "subtask_count": len(subtasks)})
@@ -116,7 +124,7 @@ async def run_demo(
         config = SchedulerConfig(
             max_concurrency=max_concurrency,
             task_timeout_seconds=task_timeout_seconds,
-            global_timeout_seconds=global_timeout_seconds,
+            global_timeout_seconds=effective_global_timeout_seconds,
             enable_replan=enable_replan,
         )
         scheduler = DAGTaskScheduler(
@@ -137,9 +145,13 @@ async def run_demo(
         execution_steps.extend(scheduler_trace.get("execution_steps", []))
 
     evidences = memory.list_evidences()
-    markdown = await writer.write(question, evidences)
+    writer_evidences = select_top_evidences_per_task(evidences, writer_top_k_per_task)
+    markdown = await writer.write(question, evidences, top_k_per_task=writer_top_k_per_task)
     if scheduler_trace.get("forced_compose"):
         markdown = _append_partial_report_notice(markdown)
+        markdown, report_quality_check = ensure_report_completeness(markdown)
+    else:
+        report_quality_check = writer.last_quality_check or {}
     execution_steps.append({"step": "write", "state": "SUCCEEDED", "evidence_count": len(evidences)})
 
     score = await judge.judge(question, markdown, evidences)
@@ -159,6 +171,9 @@ async def run_demo(
         "execution_mode": mode,
         "planned_subtasks": [task.model_dump(mode="json") for task in subtasks],
         "collected_evidences": [evidence.model_dump(mode="json") for evidence in evidences],
+        "writer_top_k_per_task": writer_top_k_per_task,
+        "used_evidence_count_for_writer": len(writer_evidences),
+        "report_quality_check": report_quality_check,
         "final_judge_score": score.model_dump(mode="json"),
         "execution_steps": execution_steps,
         "outputs": {
@@ -228,6 +243,7 @@ def main() -> None:
             max_tokens=args.max_tokens,
             request_timeout=args.request_timeout,
             enable_thinking=args.enable_thinking,
+            writer_top_k_per_task=args.writer_top_k_per_task,
         )
     )
     print(f"Wrote {trace['outputs']['report']}")

@@ -159,6 +159,14 @@ python scripts/run_demo.py --question "What are the main challenges and recent m
 
 For Qwen3 models, start with `--disable-thinking` to reduce long hidden-reasoning output and timeout risk. For the first real API test, run `linear` mode first. After linear mode works, try `dag` mode with `--max-concurrency 1` before increasing concurrency.
 
+Recommended stable SiliconFlow Qwen3 DAG demo:
+
+```bash
+python scripts/run_demo.py --question "What are the main challenges and recent methods for long-context LLM evaluation?" --backend openai-compatible --mode dag --max-concurrency 1 --api-base https://api.siliconflow.cn/v1 --api-key-env SILICONFLOW_API_KEY --model Qwen/Qwen3-8B --max-tokens 512 --request-timeout 180 --global-timeout-seconds 300 --writer-top-k-per-task 2 --disable-thinking
+```
+
+The real-LLM path includes extra stability handling: thinking-block stripping, fenced JSON cleanup, trailing-comma repair, fallback parsing for unstructured Researcher output, Writer evidence Top-K selection, and report completeness checks.
+
 Important: Agent orchestration is self-built. This project does not use LangChain Agent, OpenAI Agents SDK, CrewAI, AutoGen, or similar external Agent frameworks.
 
 ### Linear Mode vs DAG Mode

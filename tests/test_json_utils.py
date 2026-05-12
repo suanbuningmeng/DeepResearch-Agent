@@ -36,3 +36,9 @@ def test_safe_json_loads_parses_json_after_thinking_block() -> None:
     text = "<think>hidden reasoning</think>\n```json\n{\"ok\": true}\n```"
 
     assert safe_json_loads(text) == {"ok": True}
+
+
+def test_safe_json_loads_repairs_trailing_commas() -> None:
+    text = '{"items": [{"id": "a",}],}'
+
+    assert safe_json_loads(text) == {"items": [{"id": "a"}]}

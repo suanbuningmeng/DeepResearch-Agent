@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from deepresearch_agent.llm.base import BaseLLM
 from deepresearch_agent.schemas import Evidence, TaskNode
 from deepresearch_agent.utils.json_utils import safe_json_loads, strip_thinking
@@ -16,10 +18,29 @@ class ResearcherAgent:
             f"Task ID: {task.id}\n"
             f"Task name: {task.name}\n"
             f"Task description: {task.description}\n"
-            "Return only JSON with an evidences array. Each evidence must include title, content, source_url, and confidence."
+            "Return valid JSON only.\n"
+            "Do not include markdown fences.\n"
+            "Do not include explanations.\n"
+            "Return 2-3 evidence items only.\n"
+            "Use this schema exactly:\n"
+            "{\n"
+            '  "evidences": [\n'
+            "    {\n"
+            '      "id": "string",\n'
+            '      "title": "string",\n'
+            '      "content": "string",\n'
+            '      "source_url": "string or null",\n'
+            '      "confidence": 0.0\n'
+            "    }\n"
+            "  ]\n"
+            "}"
         )
         raw = await self.llm.agenerate(prompt, prompt_type="researcher")
-        data = safe_json_loads(strip_thinking(raw))
+        cleaned = strip_thinking(raw)
+        try:
+            data = safe_json_loads(cleaned)
+        except ValueError:
+            return _parse_unstructured_evidence(cleaned, task)
 
         return [
             Evidence(
@@ -50,3 +71,39 @@ def _coerce_confidence(value: object) -> float:
     if confidence > 1.0:
         confidence = confidence / 100.0
     return max(0.0, min(1.0, confidence))
+
+
+def _parse_unstructured_evidence(text: str, task: TaskNode) -> list[Evidence]:
+    lines = [
+        re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        for line in text.splitlines()
+        if re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line)
+    ]
+    if not lines:
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+        lines = paragraphs or [text.strip()]
+
+    evidences: list[Evidence] = []
+    for index, line in enumerate(lines[:3], start=1):
+        title, content = _split_unstructured_item(line, task, index)
+        evidences.append(
+            Evidence(
+                id=f"{task.id}_fallback_evidence_{index}",
+                task_id=task.id,
+                title=title,
+                content=content,
+                source_url="model://unstructured-output",
+                confidence=0.55,
+                metadata={"task_name": task.name, "fallback_parse": True},
+            )
+        )
+    return evidences
+
+
+def _split_unstructured_item(line: str, task: TaskNode, index: int) -> tuple[str, str]:
+    if ":" in line:
+        title, content = line.split(":", 1)
+        return title.strip() or f"Fallback evidence {index} for {task.name}", content.strip() or line
+    sentence = line.strip()
+    title = sentence[:80].rstrip(".")
+    return title or f"Fallback evidence {index} for {task.name}", sentence
