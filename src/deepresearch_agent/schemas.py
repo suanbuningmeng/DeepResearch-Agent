@@ -83,3 +83,15 @@ class SchedulerConfig(BaseModel):
     batch_failure_threshold: int = 2
     min_total_evidences: int = 4
     enable_replan: bool = True
+
+
+class MemoryStats(BaseModel):
+    backend: str
+    db_path: str | None = None
+    vector_index_path: str | None = None
+    inserted_evidence_count: int = 0
+    duplicate_evidence_count: int = 0
+    total_evidence_count: int = 0
+    retrieved_evidence_count: int = 0
+    memory_search_top_k: int = 10
+    source_quality_summary: dict[str, int] = Field(default_factory=dict)

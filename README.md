@@ -2,7 +2,7 @@
 
 DeepResearch-Agent is a staged MVP for a multi-agent deep research workflow. It is designed to run a complete research loop without any real LLM API calls.
 
-Current stage: **Stage 3.5 MVP with mock backend by default plus optional real OpenAI-compatible LLM backends**.
+Current stage: **Stage 4 MVP with persistent shared memory and optional real OpenAI-compatible LLM backends**.
 
 ## What It Does
 
@@ -51,6 +51,22 @@ The default backend is `mock`. Real LLM backends are available only for manual d
 - `create_llm()` factory for `mock`, `openai-compatible`, `deepseek`, and `vllm`.
 - Safer JSON parsing for real LLM outputs that may include fenced JSON blocks.
 - Existing self-built Agent orchestration is preserved. External Agent frameworks are not used.
+
+## Stage 4 Features
+
+Stage 4 adds Persistent Shared Memory and Evidence Store support.
+
+Shared Memory is the evidence layer that lets Researcher agents write evidence into a common store and lets Writer read from that store before composing the report. The default `memory` backend remains an in-memory store for fast mock tests. The optional `sqlite` backend persists evidence locally.
+
+This project uses SQLite plus a small numpy vector index because both are lightweight, local, and easy to test without network services:
+
+- SQLite stores evidence records, metadata, content hashes, and source quality labels.
+- A deterministic hashing embedding provider creates local vectors without real embedding APIs.
+- A numpy index supports simple similarity search over evidence.
+- Content hashes prevent duplicate evidence from being inserted.
+- Source quality labels distinguish `real_url`, `null_source`, `example_url`, `mock_source`, `model_generated`, and `unknown`.
+
+Current memory is intentionally lightweight. Future versions can replace hashing embeddings with BGE-M3, add L1/L2/L3 context compression, and connect real search/retrieval systems.
 
 ## Install
 
@@ -169,6 +185,32 @@ The real-LLM path includes extra stability handling: thinking-block stripping, f
 
 Important: Agent orchestration is self-built. This project does not use LangChain Agent, OpenAI Agents SDK, CrewAI, AutoGen, or similar external Agent frameworks.
 
+## SQLite Memory Demo
+
+Mock backend with SQLite memory:
+
+```bash
+python scripts/run_demo.py --question "test long-context evaluation" --backend mock --mode dag --memory-backend sqlite --clear-memory
+```
+
+SiliconFlow with SQLite memory:
+
+```bash
+python scripts/run_demo.py --question "What are the main challenges and recent methods for long-context LLM evaluation?" --backend openai-compatible --mode dag --max-concurrency 1 --api-base https://api.siliconflow.cn/v1 --api-key-env SILICONFLOW_API_KEY --model Qwen/Qwen3-8B --max-tokens 768 --request-timeout 180 --global-timeout-seconds 300 --writer-top-k-per-task 2 --disable-thinking --memory-backend sqlite --clear-memory
+```
+
+Memory trace fields are written under `memory_stats`:
+
+- `backend`: `memory` or `sqlite`.
+- `db_path`: SQLite database path when enabled.
+- `vector_index_path`: numpy vector index path when enabled.
+- `inserted_evidence_count`: evidence inserted during the run.
+- `duplicate_evidence_count`: duplicate evidence skipped during the run.
+- `total_evidence_count`: total evidence available in memory.
+- `retrieved_evidence_count`: evidence retrieved for Writer.
+- `memory_search_top_k`: retrieval limit.
+- `source_quality_summary`: counts by source quality label.
+
 ### Linear Mode vs DAG Mode
 
 `linear` mode runs each Researcher task one by one, preserving the first-stage MVP flow.
@@ -193,7 +235,7 @@ Key DAG trace fields include:
 ## Run Tests
 
 ```bash
-pytest --basetemp=.pytest_tmp_llm
+pytest --basetemp=.pytest_tmp_memory
 ```
 
 ## Documentation
@@ -228,8 +270,8 @@ DeepResearch-Agent/
 Future stages can add:
 
 - Red-Blue adversarial research and critique loops.
-- Shared memory with persistence and retrieval.
-- SQLite or vector-store backed evidence storage.
+- BGE-M3 embeddings and stronger retrieval.
+- L1/L2/L3 context compression.
 - ResearchBench-style evaluation and regression tests.
 
 These are intentionally not implemented in the first-stage MVP.

@@ -16,9 +16,10 @@ from deepresearch_agent.agents import JudgeAgent, PlannerAgent, ResearcherAgent,
 from deepresearch_agent.agents.writer import select_top_evidences_per_task
 from deepresearch_agent.engine import DAGTaskScheduler, TaskDAG
 from deepresearch_agent.llm import create_llm
-from deepresearch_agent.memory import MemoryStore
+from deepresearch_agent.memory import MemoryStore, SQLiteMemoryStore
+from deepresearch_agent.memory.source_quality import SourceQuality, classify_source_url
 from deepresearch_agent.report import ensure_report_completeness, format_report_with_score
-from deepresearch_agent.schemas import ResearchReport, SchedulerConfig, TaskNode, TaskState
+from deepresearch_agent.schemas import MemoryStats, ResearchReport, SchedulerConfig, TaskNode, TaskState
 
 
 DEFAULT_QUESTION = "What are the main challenges and recent methods for long-context LLM evaluation?"
@@ -46,6 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-concurrency", type=int, default=3, help="Maximum concurrent DAG research tasks.")
     parser.add_argument("--global-timeout-seconds", type=int, default=None, help="Global timeout for DAG mode.")
     parser.add_argument("--writer-top-k-per-task", type=int, default=2, help="Evidence items per task used by WriterAgent.")
+    parser.add_argument("--memory-backend", default="memory", choices=["memory", "sqlite"], help="Evidence memory backend.")
+    parser.add_argument("--memory-db-path", default="data/memory.sqlite", help="SQLite memory database path.")
+    parser.add_argument("--vector-index-path", default="data/vector_index.npz", help="Numpy vector index path.")
+    memory_group = parser.add_mutually_exclusive_group()
+    memory_group.add_argument("--enable-memory-retrieval", dest="enable_memory_retrieval", action="store_true", default=True)
+    memory_group.add_argument("--disable-memory-retrieval", dest="enable_memory_retrieval", action="store_false")
+    parser.add_argument("--memory-search-top-k", type=int, default=10, help="Top-K evidence items retrieved from memory.")
+    parser.add_argument("--clear-memory", action="store_true", help="Clear persistent memory before running.")
     parser.add_argument("--enable-replan", dest="enable_replan", action="store_true", default=True)
     parser.add_argument("--disable-replan", dest="enable_replan", action="store_false")
     parser.add_argument(
@@ -75,6 +84,12 @@ async def run_demo(
     request_timeout: int = 180,
     enable_thinking: bool | None = None,
     writer_top_k_per_task: int = 2,
+    memory_backend: str = "memory",
+    memory_db_path: str = "data/memory.sqlite",
+    vector_index_path: str = "data/vector_index.npz",
+    enable_memory_retrieval: bool = True,
+    memory_search_top_k: int = 10,
+    clear_memory: bool = False,
 ) -> dict[str, Any]:
     llm = create_llm(
         backend,
@@ -86,7 +101,9 @@ async def run_demo(
         request_timeout=request_timeout,
         enable_thinking=enable_thinking,
     )
-    memory = MemoryStore()
+    memory = _create_memory_store(memory_backend, memory_db_path, vector_index_path)
+    if clear_memory:
+        memory.clear()
     planner = PlannerAgent(llm)
     researcher = ResearcherAgent(llm)
     writer = WriterAgent(llm)
@@ -145,8 +162,16 @@ async def run_demo(
         execution_steps.extend(scheduler_trace.get("execution_steps", []))
 
     evidences = memory.list_evidences()
-    writer_evidences = select_top_evidences_per_task(evidences, writer_top_k_per_task)
-    markdown = await writer.write(question, evidences, top_k_per_task=writer_top_k_per_task)
+    writer_source_evidences = _select_writer_source_evidences(
+        memory=memory,
+        question=question,
+        fallback_evidences=evidences,
+        memory_backend=memory_backend,
+        enable_memory_retrieval=enable_memory_retrieval,
+        memory_search_top_k=memory_search_top_k,
+    )
+    writer_evidences = select_top_evidences_per_task(writer_source_evidences, writer_top_k_per_task)
+    markdown = await writer.write(question, writer_source_evidences, top_k_per_task=writer_top_k_per_task)
     if scheduler_trace.get("forced_compose"):
         markdown = _append_partial_report_notice(markdown)
         markdown, report_quality_check = ensure_report_completeness(markdown)
@@ -174,6 +199,14 @@ async def run_demo(
         "writer_top_k_per_task": writer_top_k_per_task,
         "used_evidence_count_for_writer": len(writer_evidences),
         "report_quality_check": report_quality_check,
+        "memory_stats": _build_memory_stats(
+            memory=memory,
+            backend=memory_backend,
+            db_path=memory_db_path if memory_backend == "sqlite" else None,
+            vector_index_path=vector_index_path if memory_backend == "sqlite" else None,
+            retrieved_evidence_count=len(writer_source_evidences) if enable_memory_retrieval else 0,
+            memory_search_top_k=memory_search_top_k,
+        ).model_dump(mode="json"),
         "final_judge_score": score.model_dump(mode="json"),
         "execution_steps": execution_steps,
         "outputs": {
@@ -224,6 +257,66 @@ The report is based on partial evidence.
     return markdown.rstrip() + notice
 
 
+def _create_memory_store(memory_backend: str, db_path: str, vector_index_path: str):
+    if memory_backend == "sqlite":
+        return SQLiteMemoryStore(db_path=db_path, vector_index_path=vector_index_path)
+    return MemoryStore()
+
+
+def _select_writer_source_evidences(
+    memory,
+    question: str,
+    fallback_evidences,
+    memory_backend: str,
+    enable_memory_retrieval: bool,
+    memory_search_top_k: int,
+):
+    if memory_backend != "sqlite" or not enable_memory_retrieval:
+        return list(fallback_evidences)
+    retrieved = memory.search_evidences(question, top_k=memory_search_top_k)
+    if not retrieved:
+        return list(fallback_evidences)
+    real_url = [
+        evidence
+        for evidence in retrieved
+        if classify_source_url(evidence.source_url) == SourceQuality.REAL_URL
+    ]
+    other = [
+        evidence
+        for evidence in retrieved
+        if classify_source_url(evidence.source_url) != SourceQuality.REAL_URL
+    ]
+    return real_url + other
+
+
+def _build_memory_stats(
+    memory,
+    backend: str,
+    db_path: str | None,
+    vector_index_path: str | None,
+    retrieved_evidence_count: int,
+    memory_search_top_k: int,
+) -> MemoryStats:
+    evidences = memory.list_evidences()
+    source_quality_summary = {quality.value: 0 for quality in SourceQuality}
+    if hasattr(memory, "source_quality_summary"):
+        source_quality_summary = memory.source_quality_summary()
+    else:
+        for evidence in evidences:
+            source_quality_summary[classify_source_url(evidence.source_url).value] += 1
+    return MemoryStats(
+        backend=backend,
+        db_path=db_path,
+        vector_index_path=vector_index_path,
+        inserted_evidence_count=int(getattr(memory, "inserted_evidence_count", len(evidences))),
+        duplicate_evidence_count=int(getattr(memory, "duplicate_evidence_count", 0)),
+        total_evidence_count=len(evidences),
+        retrieved_evidence_count=retrieved_evidence_count,
+        memory_search_top_k=memory_search_top_k,
+        source_quality_summary=source_quality_summary,
+    )
+
+
 def main() -> None:
     args = build_parser().parse_args()
     trace = asyncio.run(
@@ -244,6 +337,12 @@ def main() -> None:
             request_timeout=args.request_timeout,
             enable_thinking=args.enable_thinking,
             writer_top_k_per_task=args.writer_top_k_per_task,
+            memory_backend=args.memory_backend,
+            memory_db_path=args.memory_db_path,
+            vector_index_path=args.vector_index_path,
+            enable_memory_retrieval=args.enable_memory_retrieval,
+            memory_search_top_k=args.memory_search_top_k,
+            clear_memory=args.clear_memory,
         )
     )
     print(f"Wrote {trace['outputs']['report']}")

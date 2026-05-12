@@ -6,3 +6,8 @@ outputs*/
 *.pyc
 .env
 .DS_Store
+data/
+*.sqlite
+*.db
+*.npz
+*.npy
