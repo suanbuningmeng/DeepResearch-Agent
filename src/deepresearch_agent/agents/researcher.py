@@ -11,6 +11,7 @@ class ResearcherAgent:
         self.llm = llm
 
     async def research(self, task: TaskNode) -> list[Evidence]:
+        """Generate mock evidence items for a single research task."""
         prompt = (
             "You are a researcher agent. Generate concise mock evidence for this subtask.\n"
             f"Task ID: {task.id}\n"

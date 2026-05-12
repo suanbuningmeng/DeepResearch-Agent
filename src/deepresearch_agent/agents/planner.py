@@ -11,6 +11,7 @@ class PlannerAgent:
         self.llm = llm
 
     async def plan(self, question: str) -> list[TaskNode]:
+        """Split a user question into structured research subtasks."""
         prompt = (
             "You are a planner agent. Split the research question into 3-5 subtasks.\n"
             f"Question: {question}\n"

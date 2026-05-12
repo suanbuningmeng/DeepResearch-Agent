@@ -9,6 +9,7 @@ class WriterAgent:
         self.llm = llm
 
     async def write(self, question: str, evidences: list[Evidence]) -> str:
+        """Create a Markdown research report from a question and collected evidence."""
         evidence_lines = "\n".join(
             f"- [{evidence.id}] {evidence.title}: {evidence.content}"
             for evidence in evidences

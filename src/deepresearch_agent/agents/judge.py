@@ -16,6 +16,7 @@ class JudgeAgent:
         report: str,
         evidences: list[Evidence],
     ) -> JudgeScore:
+        """Score a report against the question and evidence using the configured LLM."""
         prompt = (
             "You are a judge agent. Score this report from 0 to 100.\n"
             f"Question: {question}\n"

@@ -9,13 +9,14 @@ class MockLLM(BaseLLM):
     """Deterministic mock backend for the first-stage MVP."""
 
     async def agenerate(self, prompt: str, **kwargs: object) -> str:
+        """Return a deterministic mock response for planner, researcher, writer, or judge prompts."""
         prompt_type = str(kwargs.get("prompt_type") or "").lower()
         normalized_prompt = prompt.lower()
 
         if prompt_type == "planner" or "planner" in normalized_prompt:
             return self._planner_response()
         if prompt_type == "researcher" or "researcher" in normalized_prompt:
-            return self._researcher_response()
+            return self._researcher_response(prompt)
         if prompt_type == "writer" or "writer" in normalized_prompt:
             return self._writer_response()
         if prompt_type == "judge" or "judge" in normalized_prompt:
@@ -51,23 +52,80 @@ class MockLLM(BaseLLM):
             }
         )
 
-    def _researcher_response(self) -> str:
+    def _researcher_response(self, prompt: str) -> str:
+        normalized_prompt = prompt.lower()
+        if "identify key challenges" in normalized_prompt:
+            evidences = [
+                {
+                    "title": "Needle-style tests are narrow",
+                    "content": "Needle-in-a-haystack tests can measure retrieval but may not fully reflect real-world long-context reasoning.",
+                    "source_url": "mock://long-context-eval/challenges/needle",
+                    "confidence": 0.88,
+                },
+                {
+                    "title": "Position bias affects long contexts",
+                    "content": "Models may perform differently depending on whether relevant evidence appears early, late, or in the middle of a long prompt.",
+                    "source_url": "mock://long-context-eval/challenges/position-bias",
+                    "confidence": 0.85,
+                },
+            ]
+        elif "review evaluation benchmarks" in normalized_prompt:
+            evidences = [
+                {
+                    "title": "Benchmarks mix synthetic and realistic tasks",
+                    "content": "Long-context benchmark suites often combine synthetic retrieval probes with multi-document QA and summarization-style tasks.",
+                    "source_url": "mock://long-context-eval/benchmarks/task-mix",
+                    "confidence": 0.86,
+                },
+                {
+                    "title": "Benchmark design needs distractors",
+                    "content": "Strong evaluations include irrelevant passages and conflicting details to test robustness beyond simple lookup.",
+                    "source_url": "mock://long-context-eval/benchmarks/distractors",
+                    "confidence": 0.83,
+                },
+            ]
+        elif "compare recent methods" in normalized_prompt:
+            evidences = [
+                {
+                    "title": "Recent methods compare retrieval and synthesis",
+                    "content": "Evaluation methods increasingly separate exact retrieval accuracy from cross-document synthesis and attribution quality.",
+                    "source_url": "mock://long-context-eval/methods/retrieval-synthesis",
+                    "confidence": 0.87,
+                },
+                {
+                    "title": "Stress tests reveal context sensitivity",
+                    "content": "Recent protocols vary evidence placement and distractor density to expose brittle long-context behavior.",
+                    "source_url": "mock://long-context-eval/methods/stress-tests",
+                    "confidence": 0.84,
+                },
+            ]
+        elif "assess limitations" in normalized_prompt:
+            evidences = [
+                {
+                    "title": "Current evaluations can overfit to probes",
+                    "content": "Models may perform well on popular diagnostic tasks while still struggling with messy real-world research contexts.",
+                    "source_url": "mock://long-context-eval/limitations/probe-overfit",
+                    "confidence": 0.82,
+                },
+                {
+                    "title": "Citation quality remains hard to measure",
+                    "content": "Long-context reports need evidence-grounded citations, but automatic citation quality metrics remain imperfect.",
+                    "source_url": "mock://long-context-eval/limitations/citations",
+                    "confidence": 0.8,
+                },
+            ]
+        else:
+            evidences = [
+                {
+                    "title": "Long-context evaluation challenge",
+                    "content": "Needle-in-a-haystack tests may not fully reflect real-world long-context reasoning.",
+                    "source_url": "mock://long-context-eval/generic",
+                    "confidence": 0.88,
+                }
+            ]
         return json.dumps(
             {
-                "evidences": [
-                    {
-                        "title": "Needle-style tests are narrow",
-                        "content": "Needle-in-a-haystack tests can measure retrieval but may not fully reflect real-world long-context reasoning.",
-                        "source_url": "mock://long-context-eval/needle",
-                        "confidence": 0.88,
-                    },
-                    {
-                        "title": "Long-context reasoning needs synthesis",
-                        "content": "Realistic evaluation often requires combining scattered evidence, tracking conflicts, and avoiding position bias.",
-                        "source_url": "mock://long-context-eval/synthesis",
-                        "confidence": 0.84,
-                    },
-                ]
+                "evidences": evidences
             }
         )
 
