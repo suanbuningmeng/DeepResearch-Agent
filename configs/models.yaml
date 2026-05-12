@@ -1,0 +1,23 @@
+mock:
+  backend: mock
+
+openai-compatible:
+  api_key_env: OPENAI_COMPATIBLE_API_KEY
+  api_base_env: OPENAI_COMPATIBLE_API_BASE
+  model_env: OPENAI_COMPATIBLE_MODEL
+  temperature: 0.2
+  max_tokens: 4096
+
+deepseek:
+  api_key_env: DEEPSEEK_API_KEY
+  api_base_env: DEEPSEEK_API_BASE
+  model_env: DEEPSEEK_MODEL
+  temperature: 0.2
+  max_tokens: 4096
+
+vllm:
+  api_key_env: VLLM_API_KEY
+  api_base_env: VLLM_API_BASE
+  model_env: VLLM_MODEL
+  default_api_base: http://localhost:8000/v1
+  default_model: Qwen2.5-7B-Instruct

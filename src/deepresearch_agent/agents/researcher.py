@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
 from deepresearch_agent.llm.base import BaseLLM
 from deepresearch_agent.schemas import Evidence, TaskNode
+from deepresearch_agent.utils.json_utils import safe_json_loads, strip_thinking
 
 
 class ResearcherAgent:
@@ -17,20 +16,37 @@ class ResearcherAgent:
             f"Task ID: {task.id}\n"
             f"Task name: {task.name}\n"
             f"Task description: {task.description}\n"
-            "Return JSON with an evidences array."
+            "Return only JSON with an evidences array. Each evidence must include title, content, source_url, and confidence."
         )
         raw = await self.llm.agenerate(prompt, prompt_type="researcher")
-        data = json.loads(raw)
+        data = safe_json_loads(strip_thinking(raw))
 
         return [
             Evidence(
                 id=f"{task.id}_evidence_{index}",
                 task_id=task.id,
-                title=item["title"],
-                content=item["content"],
-                source_url=item.get("source_url"),
-                confidence=item["confidence"],
+                title=str(item.get("title") or f"Evidence {index} for {task.name}"),
+                content=str(item.get("content") or item.get("summary") or ""),
+                source_url=_optional_str(item.get("source_url") or item.get("url")),
+                confidence=_coerce_confidence(item.get("confidence", 0.7)),
                 metadata={"task_name": task.name},
             )
             for index, item in enumerate(data["evidences"], start=1)
         ]
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _coerce_confidence(value: object) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.7
+    if confidence > 1.0:
+        confidence = confidence / 100.0
+    return max(0.0, min(1.0, confidence))

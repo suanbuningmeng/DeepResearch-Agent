@@ -58,3 +58,28 @@ class ResearchReport(BaseModel):
     markdown: str
     evidences: list[Evidence]
     score: JudgeScore | None = None
+
+
+class ReplanEvent(BaseModel):
+    id: str
+    reason: str
+    failed_task_ids: list[str]
+    new_task_ids: list[str]
+    created_at: str
+
+
+class DegradationRecord(BaseModel):
+    task_id: str
+    reason: str
+    original_state: TaskState
+    fallback_evidence_id: str | None = None
+
+
+class SchedulerConfig(BaseModel):
+    max_concurrency: int = 3
+    task_timeout_seconds: int = 30
+    global_timeout_seconds: int = 120
+    max_replan_rounds: int = 2
+    batch_failure_threshold: int = 2
+    min_total_evidences: int = 4
+    enable_replan: bool = True
