@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from deepresearch_agent.llm.base import BaseLLM
+
+
+NO_THINKING_SYSTEM_MESSAGE = (
+    "No-thinking mode is requested. Answer directly and briefly. "
+    "Do not perform step-by-step reasoning. Do not include hidden reasoning, "
+    "<think> blocks, analysis text, or explanations before the final answer. "
+    "For structured tasks, return only the requested final JSON or final report."
+)
 
 
 class OpenAICompatibleLLM(BaseLLM):
@@ -38,14 +47,19 @@ class OpenAICompatibleLLM(BaseLLM):
         self.request_timeout = request_timeout
         self.enable_thinking = enable_thinking
         self.extra_body = extra_body or {}
+        self.call_stats: list[dict[str, Any]] = []
+        self.last_response_metadata: dict[str, Any] | None = None
 
     async def agenerate(self, prompt: str, **kwargs: object) -> str:
         enable_thinking = kwargs.get("enable_thinking", self.enable_thinking)
+        prompt_type = str(kwargs.get("prompt_type") or "unknown")
+        requested_max_tokens = int(kwargs.get("max_tokens") or self.max_tokens)
+        thinking_disabled_requested = enable_thinking is False
         payload: dict[str, Any] = {
             "model": str(kwargs.get("model") or self.model),
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": _messages_for_prompt(prompt, thinking_disabled_requested),
             "temperature": float(kwargs.get("temperature") or self.temperature),
-            "max_tokens": int(kwargs.get("max_tokens") or self.max_tokens),
+            "max_tokens": requested_max_tokens,
         }
         if enable_thinking is not None:
             payload["enable_thinking"] = bool(enable_thinking)
@@ -86,4 +100,57 @@ class OpenAICompatibleLLM(BaseLLM):
             raise RuntimeError(f"LLM response missing choices[0].message.content: {data}") from exc
         if not isinstance(content, str):
             raise RuntimeError("LLM response content is not a string.")
+        self._record_response_metadata(
+            data=data,
+            prompt_type=prompt_type,
+            requested_max_tokens=requested_max_tokens,
+            content=content,
+            thinking_disabled_requested=thinking_disabled_requested,
+            sent_thinking_controls=_sent_thinking_controls(payload),
+        )
         return content
+
+    def _record_response_metadata(
+        self,
+        data: dict[str, Any],
+        prompt_type: str,
+        requested_max_tokens: int,
+        content: str,
+        thinking_disabled_requested: bool,
+        sent_thinking_controls: dict[str, Any],
+    ) -> None:
+        choices = data.get("choices")
+        first_choice = choices[0] if isinstance(choices, list) and choices else {}
+        finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+        usage = data.get("usage")
+        metadata = {
+            "call_index": len(self.call_stats) + 1,
+            "prompt_type": prompt_type,
+            "model": self.model,
+            "api_base_host": urlparse(self.api_base).netloc or None,
+            "requested_max_tokens": requested_max_tokens,
+            "thinking_disabled_requested": thinking_disabled_requested,
+            "sent_thinking_controls": sent_thinking_controls,
+            "finish_reason": finish_reason,
+            "usage": usage if isinstance(usage, dict) else None,
+            "content_chars": len(content),
+            "content_ends_with_json_boundary": content.rstrip().endswith(("}", "]")),
+        }
+        self.last_response_metadata = metadata
+        self.call_stats.append(metadata)
+
+
+def _messages_for_prompt(prompt: str, thinking_disabled_requested: bool) -> list[dict[str, str]]:
+    if not thinking_disabled_requested:
+        return [{"role": "user", "content": prompt}]
+    return [
+        {"role": "system", "content": NO_THINKING_SYSTEM_MESSAGE},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _sent_thinking_controls(payload: dict[str, Any]) -> dict[str, Any]:
+    controls: dict[str, Any] = {}
+    if "enable_thinking" in payload:
+        controls["enable_thinking"] = payload["enable_thinking"]
+    return controls

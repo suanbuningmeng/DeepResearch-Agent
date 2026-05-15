@@ -41,5 +41,6 @@ def test_dag_scheduler_runs_independent_research_tasks() -> None:
         assert "final_task_states" in trace
         assert trace["task_state_transitions"]
         assert set(trace["final_task_states"]) == {"task_1", "task_2", "task_3"}
+        assert {task.timeout_seconds for task in dag.list_tasks()} == {5}
 
     asyncio.run(run())

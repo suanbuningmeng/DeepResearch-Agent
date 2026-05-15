@@ -61,7 +61,8 @@ def test_researcher_coerces_confidence_and_optional_source_url() -> None:
         evidences = await researcher.research(task)
 
         assert evidences[0].source_url is None
-        assert evidences[0].confidence == 0.88
+        assert evidences[0].confidence == 0.5
+        assert evidences[0].metadata["citation_validation_status"] == "unverified"
 
     asyncio.run(run())
 

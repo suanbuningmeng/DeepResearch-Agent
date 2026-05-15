@@ -104,7 +104,8 @@ class DAGTaskScheduler:
             started_at = perf_counter()
 
             try:
-                timeout_seconds = min(task.timeout_seconds, self.config.task_timeout_seconds)
+                timeout_seconds = self.config.task_timeout_seconds
+                task.timeout_seconds = timeout_seconds
                 evidences = await run_with_timeout(
                     self._research_task(task),
                     timeout_seconds,

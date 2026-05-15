@@ -21,6 +21,10 @@ class MockLLM(BaseLLM):
             return self._writer_response()
         if prompt_type == "judge" or "judge" in normalized_prompt:
             return self._judge_response()
+        if prompt_type == "red" or "redagent" in normalized_prompt:
+            return self._red_response()
+        if prompt_type == "blue" or "blueagent" in normalized_prompt:
+            return self._blue_response()
 
         return "MockLLM received an unknown prompt type."
 
@@ -160,5 +164,22 @@ Long-context LLM evaluation is moving toward broader task suites that measure re
                 "clarity": 90,
                 "overall": 86,
                 "comments": "The report is coherent but uses mock evidence.",
+            }
+        )
+
+    def _red_response(self) -> str:
+        return json.dumps(
+            {
+                "issues": [],
+                "summary": "No high-severity issues found in the deterministic mock report.",
+            }
+        )
+
+    def _blue_response(self) -> str:
+        return json.dumps(
+            {
+                "revised_report": self._writer_response(),
+                "patches": [],
+                "summary": "No repair was needed for the deterministic mock report.",
             }
         )

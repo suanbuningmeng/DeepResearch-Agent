@@ -27,7 +27,8 @@ def test_researcher_fallback_parses_bullet_output() -> None:
 
         assert len(evidences) == 2
         assert evidences[0].source_url == "model://unstructured-output"
-        assert evidences[0].confidence == 0.55
+        assert evidences[0].confidence == 0.45
+        assert evidences[0].metadata["citation_validation_status"] == "unverified"
         assert evidences[0].metadata["fallback_parse"] is True
 
     asyncio.run(run())

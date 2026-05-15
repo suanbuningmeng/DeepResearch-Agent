@@ -5,13 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "deepresearch-agent"
 version = "0.1.0"
-description = "MVP multi-agent deep research workflow with a mock backend."
+description = "MVP multi-agent deep research workflow with production search adapters, arXiv paper grounding, citation validation, evaluation utilities, and a mock backend."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27,<1.0",
     "numpy>=1.26,<3.0",
     "pydantic>=2.7,<3.0",
+    "streamlit>=1.35,<2.0",
 ]
 
 [project.optional-dependencies]

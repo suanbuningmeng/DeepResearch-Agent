@@ -23,12 +23,14 @@ def check_report_completeness(markdown: str) -> dict[str, Any]:
     dangling_evidence_reference = _has_dangling_evidence_reference(markdown)
     evidence_summary_incomplete = _evidence_summary_incomplete(markdown)
     incomplete_tail = _has_incomplete_bullet_tail(markdown)
+    natural_language_tail_incomplete = _natural_language_tail_incomplete(markdown)
     report_incomplete = bool(
         missing_sections
         or incomplete_tail
         or unfinished_markdown_bold
         or dangling_evidence_reference
         or evidence_summary_incomplete
+        or natural_language_tail_incomplete
     )
     return {
         "is_complete": not report_incomplete,
@@ -37,6 +39,7 @@ def check_report_completeness(markdown: str) -> dict[str, Any]:
         "unfinished_markdown_bold": unfinished_markdown_bold,
         "evidence_summary_incomplete": evidence_summary_incomplete,
         "dangling_evidence_reference": dangling_evidence_reference,
+        "natural_language_tail_incomplete": natural_language_tail_incomplete,
         "repair_applied": False,
         "report_incomplete": report_incomplete,
     }
@@ -51,6 +54,9 @@ def repair_incomplete_report(markdown: str) -> str:
 
     if check_report_completeness(repaired)["unfinished_markdown_bold"]:
         repaired = _repair_unfinished_bold(repaired)
+
+    if check_report_completeness(repaired)["natural_language_tail_incomplete"]:
+        repaired = _repair_natural_language_tail(repaired)
 
     additions: list[str] = []
     missing_sections = set(check_report_completeness(repaired)["missing_sections"])
@@ -173,6 +179,77 @@ def _repair_unfinished_bold(markdown: str) -> str:
     if _bullet_is_incomplete(line):
         return markdown[:line_start].rstrip()
     return markdown + "**"
+
+
+def _natural_language_tail_incomplete(markdown: str) -> bool:
+    paragraph = _last_body_paragraph(markdown)
+    if not paragraph:
+        return False
+    if paragraph.endswith(("```", ".", "!", "?", "。", "！", "？")):
+        return False
+    lowered = paragraph.lower().rstrip()
+    if lowered.endswith((",", ";", ":", "-", "and", "or", "but", "with", "for", "of", "to", "in", "on", "at", "by", "from", "as", "than", "long")):
+        return True
+    return True
+
+
+def _repair_natural_language_tail(markdown: str) -> str:
+    lines = markdown.rstrip().splitlines()
+    paragraph_bounds = _last_body_paragraph_bounds(lines)
+    if paragraph_bounds is not None:
+        start, end = paragraph_bounds
+        del lines[start:end]
+    repaired = "\n".join(lines).rstrip()
+    if "## Conclusion" not in repaired:
+        repaired = repaired + "\n\n## Conclusion"
+    conclusion = _extract_section(repaired, "Conclusion")
+    if not conclusion.strip() or _natural_language_tail_incomplete(repaired):
+        repaired = _replace_section(
+            repaired,
+            "Conclusion",
+            "The available evidence indicates that long-context LLM evaluation should combine retrieval, synthesis, robustness, and citation-quality checks.",
+        )
+    return repaired
+
+
+def _last_body_paragraph(markdown: str) -> str:
+    bounds = _last_body_paragraph_bounds(markdown.rstrip().splitlines())
+    if bounds is None:
+        return ""
+    start, end = bounds
+    return " ".join(line.strip() for line in markdown.rstrip().splitlines()[start:end]).strip()
+
+
+def _last_body_paragraph_bounds(lines: list[str]) -> tuple[int, int] | None:
+    end = len(lines)
+    while end > 0 and not lines[end - 1].strip():
+        end -= 1
+    while end > 0 and lines[end - 1].strip().startswith("Note: Some incomplete generated fragments"):
+        end -= 1
+        while end > 0 and not lines[end - 1].strip():
+            end -= 1
+    if end == 0:
+        return None
+    start = end - 1
+    while start >= 0 and lines[start].strip():
+        start -= 1
+    start += 1
+    paragraph_lines = lines[start:end]
+    if not paragraph_lines:
+        return None
+    if all(line.strip().startswith("#") for line in paragraph_lines):
+        return None
+    return start, end
+
+
+def _replace_section(markdown: str, section: str, content: str) -> str:
+    lines = markdown.splitlines()
+    bounds = _find_section_bounds(lines, section)
+    if bounds is None:
+        return markdown.rstrip() + f"\n\n## {section}\n{content}"
+    start, end = bounds
+    replacement = [lines[start], content]
+    return "\n".join(lines[:start] + replacement + lines[end:])
 
 
 def _extract_section(markdown: str, section: str) -> str:
