@@ -272,6 +272,114 @@ grounded evidence：加 --enable-web-search --search-provider arxiv
 - `collected_evidences[*].metadata.retrieval_relevance_score` 是否合理
 - `citation_validation_status` 是否比以前更保守
 
+### 4.6 MiMo Token Plan thinking 控制说明
+
+Xiaomi MiMo Token Plan 的 OpenAI-compatible API 对 thinking / reasoning 控制比较特殊。项目最初使用顶层参数：
+
+```json
+{
+  "enable_thinking": false
+}
+```
+
+但实测在 Token Plan 上该写法不能稳定关闭 reasoning token。通过 `scripts/test_mimo_thinking_controls.py` 对多种 payload 进行 probe 后发现，MiMo Token Plan 能识别下面这种写法：
+
+```json
+{
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+```
+
+因此当前 `OpenAICompatibleLLM` 已经对 MiMo 做了最小兼容适配：
+
+- 普通 OpenAI-compatible / DeepSeek / vLLM 后端仍保留原有 top-level `enable_thinking` 行为。
+- 当 `api_base` 或 `model` 中识别到 `mimo` / `xiaomimimo` 时，自动改用 `chat_template_kwargs.enable_thinking=false`。
+- trace 中会记录实际发送的 thinking control。
+
+可以用下面命令单独诊断 MiMo thinking 参数：
+
+```powershell
+python scripts/test_mimo_thinking_controls.py
+```
+
+结果会写入：
+
+```text
+outputs/mimo_thinking_probe.json
+```
+
+重点查看：
+
+```json
+"sent_thinking_controls": {
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
+```
+
+以及各 LLM 调用中的：
+
+```json
+"completion_tokens_details": {
+  "reasoning_tokens": 0
+}
+```
+
+如果 `reasoning_tokens` 仍然很高，说明服务端可能改变了参数协议，或者当前模型仍然会计入内部推理 token。
+
+### 4.7 推荐稳定 demo：MiMo + Tavily grounding
+
+arXiv API 偶尔会返回 `429 Rate exceeded`。如果需要更稳定地反复测试真实检索链路，推荐使用 Tavily：
+
+```powershell
+python scripts/run_demo.py `
+  --question "What are recent methods for task-oriented semantic communication with LLMs?" `
+  --backend openai-compatible `
+  --mode dag `
+  --max-concurrency 2 `
+  --api-base $env:XIAOMI_MIMO_API_BASE `
+  --api-key-env XIAOMI_MIMO_API_KEY `
+  --model $env:XIAOMI_MIMO_MODEL `
+  --max-tokens 4096 `
+  --request-timeout 240 `
+  --global-timeout-seconds 720 `
+  --disable-thinking `
+  --enable-web-search `
+  --search-provider tavily `
+  --search-api-key-env TAVILY_API_KEY `
+  --max-search-queries 1 `
+  --search-top-k 2
+```
+
+该配置当前是比较稳定的展示链路：
+
+- MiMo 负责 Planner / Researcher / Writer / Judge。
+- Tavily 负责真实检索，避免频繁触发 arXiv 限流。
+- DAG 使用 `--max-concurrency 2`，Researcher 子任务可以并行。
+- `--disable-thinking` 在 MiMo Token Plan 下会通过 `chat_template_kwargs.enable_thinking=false` 发送。
+- `--max-tokens 4096` 给 Writer 留足报告输出空间，避免被 reasoning token 或长报告挤到 `finish_reason="length"`。
+
+跑完后建议查看：
+
+```text
+outputs/demo_report.md
+outputs/demo_trace.json
+```
+
+重点字段：
+
+```text
+llm_call_stats[*].sent_thinking_controls
+llm_call_stats[*].usage.completion_tokens_details.reasoning_tokens
+search_stats.provider
+search_stats.provider_errors
+collected_evidences[*].metadata.citation_validation_status
+final_judge_score.overall
+```
+
 ---
 
 ## 5. 当前 Agent 说明
@@ -768,6 +876,7 @@ DeepResearch-Agent/
 |-- scripts/
 |   |-- run_demo.py
 |   |-- test_mimo_api.py
+|   |-- test_mimo_thinking_controls.py
 |   |-- run_benchmark.py
 |   |-- run_experiment_matrix.py
 |   |-- summarize_results.py

@@ -146,3 +146,60 @@ def test_openai_compatible_disable_thinking_adds_direct_system_message(
     assert llm.last_response_metadata is not None
     assert llm.last_response_metadata["thinking_disabled_requested"] is True
     assert llm.last_response_metadata["sent_thinking_controls"] == {"enable_thinking": False}
+
+
+def test_openai_compatible_mimo_uses_chat_template_thinking_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_payload = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {"content": "{}"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"completion_tokens": 1, "prompt_tokens": 1, "total_tokens": 2},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: str, headers: dict, json: dict) -> FakeResponse:
+            captured_payload.update(json)
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "deepresearch_agent.llm.openai_compatible_client.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    llm = OpenAICompatibleLLM(
+        api_key="secret-test-key",
+        api_base="https://token-plan-cn.xiaomimimo.com/v1",
+        model="mimo-v2.5-pro",
+        enable_thinking=False,
+    )
+
+    asyncio.run(llm.agenerate("return json", prompt_type="writer"))
+
+    assert "enable_thinking" not in captured_payload
+    assert captured_payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured_payload["messages"][0]["role"] == "system"
+    assert llm.last_response_metadata is not None
+    assert llm.last_response_metadata["thinking_disabled_requested"] is True
+    assert llm.last_response_metadata["sent_thinking_controls"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }

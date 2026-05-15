@@ -62,7 +62,12 @@ class OpenAICompatibleLLM(BaseLLM):
             "max_tokens": requested_max_tokens,
         }
         if enable_thinking is not None:
-            payload["enable_thinking"] = bool(enable_thinking)
+            _apply_thinking_control(
+                payload,
+                enable_thinking=bool(enable_thinking),
+                api_base=self.api_base,
+                model=self.model,
+            )
         extra_body = kwargs.get("extra_body") or self.extra_body
         if isinstance(extra_body, dict) and extra_body:
             payload.update(extra_body)
@@ -153,4 +158,29 @@ def _sent_thinking_controls(payload: dict[str, Any]) -> dict[str, Any]:
     controls: dict[str, Any] = {}
     if "enable_thinking" in payload:
         controls["enable_thinking"] = payload["enable_thinking"]
+    chat_template_kwargs = payload.get("chat_template_kwargs")
+    if isinstance(chat_template_kwargs, dict) and "enable_thinking" in chat_template_kwargs:
+        controls["chat_template_kwargs"] = {
+            "enable_thinking": chat_template_kwargs["enable_thinking"]
+        }
+    thinking = payload.get("thinking")
+    if isinstance(thinking, dict):
+        controls["thinking"] = dict(thinking)
     return controls
+
+
+def _apply_thinking_control(
+    payload: dict[str, Any],
+    enable_thinking: bool,
+    api_base: str,
+    model: str,
+) -> None:
+    if _is_mimo_token_plan(api_base, model):
+        payload["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+        return
+    payload["enable_thinking"] = enable_thinking
+
+
+def _is_mimo_token_plan(api_base: str, model: str) -> bool:
+    text = f"{api_base} {model}".lower()
+    return "xiaomimimo" in text or "mimo" in text
